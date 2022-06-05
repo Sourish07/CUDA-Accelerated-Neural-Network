@@ -11,11 +11,12 @@
 #pragma comment(lib, "curand.lib")
 
 #include "mnist.cuh"
+#include "timer.h"
 
 using namespace std;
 
-#define SIZE_OF_TRAIN 60000
-#define SIZE_OF_TEST 10000
+// #define SIZE_OF_TRAIN 60000
+// #define SIZE_OF_TEST 10000
 
 #define BLOCK_SIZE 32
 
@@ -100,45 +101,57 @@ void set_up_y_truth(double* dataset, double* dest, int* indices, int batch_size)
 
 __global__
 void sigmoid(double* layers, int num, int batch_size) {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    int stride = gridDim.x * blockDim.x;
     
-    if (index < num * batch_size)
-    {
-        auto exp_x = exp(layers[index]);
-        layers[index] = exp_x / (exp_x + 1);
+    for (int i = idx; i < num * batch_size; i += stride)    {
+        auto exp_x = exp(layers[i]);
+        layers[i] = exp_x / (exp_x + 1);
     }
 }
 
 __global__ 
-void tan_h(double* layers, int num, int batch_size) {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
+void tanh(double* layers, int num, int batch_size) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    int stride = gridDim.x * blockDim.x;
     
-    if (index < num * batch_size)
-    {
-        auto exp_2x = exp(2 * layers[index]);
-        layers[index] = (exp_2x - 1) / (exp_2x + 1);
+    for (int i = idx; i < num * batch_size; i += stride)    {
+        auto exp_2x = exp(2 * layers[i]);
+        layers[i] = (exp_2x - 1) / (exp_2x + 1);
     }
 }
 
 // Layer is 16 by batch_size (or 10 by batch_size)
 __global__ 
 void add_bias(double* layer, double* bias, int num, int batch_size) {
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    int stride_x = gridDim.x * blockDim.x;
+    int stride_y = gridDim.y * blockDim.y;
 
-    if (row < num && col < batch_size) {
-        layer[num * batch_size + col] += bias[num];
+    for (int row = x; row < num; row += stride_x)
+    {
+        for (int col = y; col < batch_size; col += stride_y)
+        {
+            layer[row * batch_size + col] += bias[row];
+        }
     }
 }
 
 __global__
 void transpose(double* mat, double* mat_t, int rows, int cols) {
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    int stride_x = gridDim.x * blockDim.x;
+    int stride_y = gridDim.y * blockDim.y;
 
-    if (row < rows && col < cols)
+    for (int row = x; row < rows; row += stride_x)
     {
-        mat_t[col * rows + row] = mat[row * cols + col];
+        for (int col = y; col < cols; col += stride_y) {
+            mat_t[col * rows + row] = mat[row * cols + col];
+        }
     }
 }
 
@@ -150,17 +163,23 @@ void transpose(double* mat, double* mat_t, int rows, int cols) {
 __global__
 void mat_mul(double* a, double* b, double* c, int m, int n, int o)
 {
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    int stride_x = gridDim.x * blockDim.x;
+    int stride_y = gridDim.y * blockDim.y;
 
-    if (row < m && col < o)
+    for (int row = x; row < m; row += stride_x)
     {
-        double sum = 0;
-        for (int i = 0; i < n; i++)
+        for (int col = y; col < o; col += stride_y)
         {
-            sum += a[row * n + i] * b[i * o + col];
+            double sum = 0;
+            for (int i = 0; i < n; i++)
+            {
+                sum += a[row * n + i] * b[i * o + col];
+            }
+            c[row * o + col] = sum;
         }
-        c[row * o + col] = sum;
     }
 }
 
@@ -216,47 +235,49 @@ public:
 
         batch_size = 256;
         learning_rate = 0.01;
+        input_layer_size = 784;
         hidden_layer_size = 16;
+        output_layer_size = 10;
 
         curandGenerator_t prng;
         curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_DEFAULT);
 
         // Weight matrix for second layer
-        cudaMallocManaged(&a, 16 * 784 * sizeof(double));
-        curandGenerateUniformDouble(prng, a, 16 * 784);
-        init_weights<<<1, 1>>>(a, 16 * 784);
+        cudaMallocManaged(&a, hidden_layer_size * input_layer_size * sizeof(double));
+        curandGenerateUniformDouble(prng, a, hidden_layer_size * input_layer_size);
+        init_weights<<<1, 1>>>(a, hidden_layer_size * input_layer_size);
 
-        cudaMallocManaged(&a_bias, 16 * sizeof(double));
-        init_bias_cuda<<<1, 1>>>(a_bias, 16);
+        cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
+        init_bias_cuda<<<1, 1>>>(a_bias, hidden_layer_size);
         
 
         // Weight matrix for output layer
-        cudaMallocManaged(&b, 10 * 16 * sizeof(double));
-        curandGenerateUniformDouble(prng, b, 10 * 16);
-        init_weights << <1, 1 >> > (b, 10 * 16);
+        cudaMallocManaged(&b, output_layer_size * hidden_layer_size * sizeof(double));
+        curandGenerateUniformDouble(prng, b, output_layer_size * hidden_layer_size);
+        init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
 
-        cudaMallocManaged(&b_bias, 10 * sizeof(double));
-        init_bias_cuda << <1, 1 >> > (b_bias, 10);
+        cudaMallocManaged(&b_bias, output_layer_size * sizeof(double));
+        init_bias_cuda << <1, 1 >> > (b_bias, output_layer_size);
         cudaDeviceSynchronize();
 
-        cudaMallocManaged(&input_layer, 784 * batch_size * sizeof(double));
+        cudaMallocManaged(&input_layer, input_layer_size * SIZE_OF_TRAIN * sizeof(double));
 
-        cudaMallocManaged(&hidden_layer, 16 * batch_size * sizeof(double));
-        cudaMallocManaged(&hidden_layer_error, 16 * batch_size * sizeof(double));
-        cudaMallocManaged(&hidden_layer_error_avgs, 16 * sizeof(double));
+        cudaMallocManaged(&hidden_layer, hidden_layer_size * SIZE_OF_TRAIN * sizeof(double));
+        cudaMallocManaged(&hidden_layer_error, hidden_layer_size * SIZE_OF_TRAIN * sizeof(double));
+        cudaMallocManaged(&hidden_layer_error_avgs, hidden_layer_size * sizeof(double));
 
-        cudaMallocManaged(&output_layer, 10 * batch_size * sizeof(double));
-        cudaMallocManaged(&output_layer_error, 10 * batch_size * sizeof(double));
-        cudaMallocManaged(&output_layer_error_avgs, 10 * sizeof(double));
+        cudaMallocManaged(&output_layer, output_layer_size * SIZE_OF_TRAIN * sizeof(double));
+        cudaMallocManaged(&output_layer_error, output_layer_size * SIZE_OF_TRAIN * sizeof(double));
+        cudaMallocManaged(&output_layer_error_avgs, output_layer_size * sizeof(double));
 
         cudaMallocManaged(&batch_indices, batch_size * sizeof(int));
 
-        cudaMallocManaged(&y_truth, 10 * batch_size * sizeof(double));
+        cudaMallocManaged(&y_truth, output_layer_size * SIZE_OF_TRAIN * sizeof(double));
 
-        cudaMallocManaged(&input_layer_t, batch_size * 784 * sizeof(double));
-        cudaMallocManaged(&hidden_layer_t, batch_size * 16 * sizeof(double));
-        cudaMallocManaged(&gradient_a, 16 * 784 * sizeof(double));
-        cudaMallocManaged(&gradient_b, 10 * 16 * sizeof(double));
+        cudaMallocManaged(&input_layer_t, SIZE_OF_TRAIN * input_layer_size * sizeof(double));
+        cudaMallocManaged(&hidden_layer_t, SIZE_OF_TRAIN * hidden_layer_size * sizeof(double));
+        cudaMallocManaged(&gradient_a, hidden_layer_size * input_layer_size * sizeof(double));
+        cudaMallocManaged(&gradient_b, output_layer_size * hidden_layer_size * sizeof(double));
 
         cudaGetDevice(&deviceId);
         cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
@@ -270,19 +291,20 @@ public:
         mt19937 g(rd());
 
         vector<int> indices;
-        for (int j = 0; j < SIZE_OF_TRAIN; j++)
-            indices.push_back(j);
+        for (int i = 0; i < SIZE_OF_TRAIN; i++)
+            indices.push_back(i);
 
         for (int i = 0; i < num_of_epochs; i++)
         {
-            printf("Epoch: %d\n", i);
+            //printf("Epoch: %d\n", i);
             shuffle(indices.begin(), indices.end(), g);
 
-            for (int j = 0; j < indices.size() - batch_size; j += batch_size)
+            for (int j = 0; j < indices.size() - batch_size + 1; j += batch_size)
             {
-                if (j % (10 * batch_size) == 0)
+                
+                if (j % (10 * batch_size) == 0 || indices.size() - j > batch_size)
                 {
-                    printf("Training example: %d\n", j);
+                    std::cerr << "\rEpoch: " << i << " | Progress: " << (j + batch_size) * 100 / ((indices.size() / batch_size) * batch_size) << "% " << std::flush;
                 }
 
                 cudaMemPrefetchAsync(batch_indices, batch_size * sizeof(int), cudaCpuDeviceId);
@@ -295,7 +317,7 @@ public:
 
                 copy_data << < dim3(calc_dim3(784), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (mnist.x_train, input_layer, batch_indices, batch_size);
                 
-                forward(input_layer);
+                forward();
 
                 set_up_y_truth << <dim3(calc_dim3(10), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (mnist.y_train, y_truth, batch_indices, batch_size);
 
@@ -304,23 +326,28 @@ public:
 
                 cudaDeviceSynchronize();
             }
-            //calc_train_accuracy();
-            calc_test_accuracy();
+            start_timer();
+            printf("| Train accuracy: %f ", calc_train_accuracy());
+            end_timer();
+            start_timer();
+            printf("| Test accuracy: %f\n", calc_test_accuracy());
+            end_timer();
         }
     }
 
-    void forward(double* input_layer)
+    void forward()
     {
+        int yeet = 16;
         // a: 16 * 784, input_layer: 784 * batch_size
         //start_time();
-        mat_mul<<<dim3(calc_dim3(16), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> >(a, input_layer, hidden_layer, 16, 784, batch_size);
-        add_bias << <dim3(calc_dim3(16), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (hidden_layer, a_bias, 16, batch_size);
-        tan_h<<<4096 / 32, BLOCK_SIZE >> >(hidden_layer, 16, batch_size);
-
+        mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(yeet)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> >(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
+        add_bias << <dim3(calc_dim3(hidden_layer_size), calc_dim3(yeet)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (hidden_layer, a_bias, hidden_layer_size, batch_size);
+        tanh<<<calc_dim3(hidden_layer_size * yeet), BLOCK_SIZE >> >(hidden_layer, hidden_layer_size, batch_size);
+        
         // b: 10 * 16, hidden_layer: 16 * 1
-        mat_mul << <dim3(calc_dim3(10), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (b, hidden_layer, output_layer, 10, 16, batch_size);
-        add_bias << <dim3(calc_dim3(10), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (output_layer, b_bias, 10, batch_size);
-        sigmoid<<<((16 * batch_size + 32 - 1) / 32), BLOCK_SIZE >>>(output_layer, 10, batch_size);//((10 * batch_size + 32 - 1) / 32) * 32
+        mat_mul << <dim3(calc_dim3(10), calc_dim3(yeet)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (b, hidden_layer, output_layer, 10, 16, batch_size);
+        add_bias << <dim3(calc_dim3(10), calc_dim3(yeet)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (output_layer, b_bias, 10, batch_size);
+        sigmoid<<<calc_dim3(output_layer_size * yeet), BLOCK_SIZE >>>(output_layer, 10, batch_size);
         //end_time();
     }
 
@@ -356,7 +383,7 @@ public:
 
     int predict(double* input_layer)
     {
-        forward(input_layer);
+        forward();
 
         auto prediction = 0;
         double max_value = 0;
@@ -372,43 +399,51 @@ public:
         return prediction;
     }
 
-    void calc_train_accuracy()
+    float calc_train_accuracy()
     {
+        
         int num_correct = 0;
-        for (int i = 0; i < SIZE_OF_TRAIN; i++)
+
+        transpose<<<dim3(calc_dim3(784), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_train, input_layer, 784, SIZE_OF_TRAIN);
+        cudaDeviceSynchronize();
+
+        int old_batch_size = batch_size;
+        batch_size = SIZE_OF_TRAIN;
+
+        forward();
+        cudaDeviceSynchronize();
+
+        for (int j = 0; j < SIZE_OF_TRAIN; j++)
         {
-            printf("%d\n", i);
-            double *test_data;
-            cudaMallocManaged(&test_data, 784 * sizeof(double));
-
-            for (int k = 0; k < 784; k++)
+            auto prediction = 0;
+            double max_value = 0;
+            for (int i = 0; i < 10; i++)
             {
-                test_data[k] = 0;
-            }
-            for (int j = 0; j < 784; j++)
-            {
-                test_data[j] = mnist.x_train[i * 784 + j];
+                if (output_layer[i * batch_size + j] > max_value)
+                {
+                    prediction = i;
+                    max_value = output_layer[i * batch_size + j];
+                }
             }
 
-            int true_label = (int)mnist.y_train[i];
-            int predicted_label = predict(test_data);
-
-            if (predicted_label == true_label)
+            if (prediction == mnist.y_train[j])
             {
                 num_correct++;
             }
         }
-        double percentage = num_correct / (double)SIZE_OF_TRAIN;
-        printf("Train accuracy: %f\n", percentage);
+
+        batch_size = old_batch_size;
+
+        return num_correct / (double)SIZE_OF_TRAIN;
     }
 
-    void calc_test_accuracy()
+    float calc_test_accuracy()
     {
         int num_correct = 0;
         int num_counted = 0;
-        for (int i = 0; i < SIZE_OF_TEST - batch_size; i += batch_size)
+
+        for (int i = 0; i < SIZE_OF_TEST - batch_size + 1; i += batch_size)
         {
-            printf("%d\n", i);
             for (int j = 0; j < batch_size; j++)
             {
                 batch_indices[j] = i + j;
@@ -424,7 +459,7 @@ public:
                 true_labels[j] = (int) mnist.y_test[i + j];
             }
 
-            forward(input_layer);
+            forward();
             cudaDeviceSynchronize();
 
             for (int j = 0; j < batch_size; j++)
@@ -448,8 +483,7 @@ public:
             }
         }
 
-        double percentage = num_correct / (double)num_counted;
-        printf("Test accuracy: %f\n", percentage);
+        return num_correct / (float) num_counted * 100;
     }
 
 public:
@@ -477,7 +511,9 @@ public:
 
     double learning_rate;
 
+    int input_layer_size;
     int hidden_layer_size;
+    int output_layer_size;
     int batch_size;
     
     double* input_layer_t;
@@ -488,5 +524,11 @@ public:
     int deviceId;
     int numberOfSMs;
 
-    
+    // double* input_layer_train;
+    // double* hidden_layer_train;
+    // double* output_layer_train;
+
+    // double* input_layer_test;
+    // double* hidden_layer_test;
+    // double* output_layer_test;
 };

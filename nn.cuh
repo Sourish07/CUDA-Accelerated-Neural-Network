@@ -16,9 +16,8 @@ using namespace std;
 
 #define BLOCK_SIZE 32
 
-
-__global__ 
-void grad_desc_weights(double* weights, double* gradient, double learning_rate, int rows, int cols) {
+__global__ void grad_desc_weights(double *weights, double *gradient, double learning_rate, int rows, int cols)
+{
     int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
     int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -27,14 +26,15 @@ void grad_desc_weights(double* weights, double* gradient, double learning_rate, 
 
     for (int i = idx_x; i < rows; i += stride_x)
     {
-        for (int j = idx_y; j < cols; j += stride_y) {
+        for (int j = idx_y; j < cols; j += stride_y)
+        {
             weights[i * cols + j] -= learning_rate * gradient[i * cols + j];
         }
-    }  
+    }
 }
 
-__global__ 
-void grad_desc_bias(double* bias, double* error, double learning_rate, int size) {
+__global__ void grad_desc_bias(double *bias, double *error, double learning_rate, int size)
+{
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = gridDim.x * blockDim.x;
 
@@ -45,8 +45,8 @@ void grad_desc_bias(double* bias, double* error, double learning_rate, int size)
 }
 
 // Taking the average of each row
-__global__
-void calc_avgs(double* error, double* avgs, int rows, int cols) {
+__global__ void calc_avgs(double *error, double *avgs, int rows, int cols)
+{
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = gridDim.x * blockDim.x;
 
@@ -61,14 +61,16 @@ void calc_avgs(double* error, double* avgs, int rows, int cols) {
     }
 }
 
-__global__ void sigmoid_derivative(double* y_truth, double* output_layer, double* output_layer_error, int rows, int cols) {
+__global__ void sigmoid_derivative(double *y_truth, double *output_layer, double *output_layer_error, int rows, int cols)
+{
     int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
     int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
-    for (int i = idx_x; i < rows; i += stride_x) {
+    for (int i = idx_x; i < rows; i += stride_x)
+    {
         for (int j = idx_y; j < cols; j += stride_y)
         {
             double error_prime = -1 * (y_truth[i * cols + j] - output_layer[i * cols + j]);
@@ -78,15 +80,17 @@ __global__ void sigmoid_derivative(double* y_truth, double* output_layer, double
     }
 }
 
-__global__ void tanh_derivative(double* output_layer_error, double* b, double* hidden_layer, double* hidden_layer_error, int output_size, int rows, int cols) {
+__global__ void tanh_derivative(double *output_layer_error, double *b, double *hidden_layer, double *hidden_layer_error, int output_size, int rows, int cols)
+{
     int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
     int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
-    for (int i = idx_x; i < rows; i += stride_x) {
-        for (int j = idx_y; j < cols; j += stride_y) 
+    for (int i = idx_x; i < rows; i += stride_x)
+    {
+        for (int j = idx_y; j < cols; j += stride_y)
         {
             double error_prime = 0;
             for (int k = 0; k < output_size; k++)
@@ -99,48 +103,62 @@ __global__ void tanh_derivative(double* output_layer_error, double* b, double* h
     }
 }
 
-__global__
-void set_up_y_truth(double* dataset, double* dest, int* indices, int batch_size) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+__global__ void set_up_y_truth(double *dataset, double *dest, int *indices, int rows, int cols)
+{
+    int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x < 10 && y < batch_size)
+    int stride_x = gridDim.x * blockDim.x;
+    int stride_y = gridDim.y * blockDim.y;
+
+    for (int i = idx_x; i < rows; i += stride_x)
     {
-        int label = dataset[indices[y]];
+        for (int j = idx_y; j < cols; j += stride_y)
+        {
+            int label = dataset[indices[j]];
 
-        if (x == label) { dest[x * batch_size + y] = 1; }
-        else { dest[x * batch_size + y] = 0; }
+            if (i == label)
+            {
+                dest[i * cols + j] = 1;
+            }
+            else
+            {
+                dest[i * cols + j] = 0;
+            }
+        }
     }
 }
 
-__global__
-void sigmoid(double* layers, int num, int batch_size) {
+__global__ void sigmoid(double *layers, int num, int batch_size)
+{
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = gridDim.x * blockDim.x;
-    
-    for (int i = idx; i < num * batch_size; i += stride)    {
+
+    for (int i = idx; i < num * batch_size; i += stride)
+    {
         auto exp_x = exp(layers[i]);
         layers[i] = exp_x / (exp_x + 1);
     }
 }
 
-__global__ 
-void tanh(double* layers, int num, int batch_size) {
+__global__ void tanh(double *layers, int num, int batch_size)
+{
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = gridDim.x * blockDim.x;
-    
-    for (int i = idx; i < num * batch_size; i += stride)    {
+
+    for (int i = idx; i < num * batch_size; i += stride)
+    {
         auto exp_2x = exp(2 * layers[i]);
         layers[i] = (exp_2x - 1) / (exp_2x + 1);
     }
 }
 
 // Layer is 16 by batch_size (or output_layer_size by batch_size)
-__global__ 
-void add_bias(double* layer, double* bias, int num, int batch_size) {
+__global__ void add_bias(double *layer, double *bias, int num, int batch_size)
+{
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
@@ -153,17 +171,18 @@ void add_bias(double* layer, double* bias, int num, int batch_size) {
     }
 }
 
-__global__
-void transpose(double* mat, double* mat_t, int rows, int cols) {
+__global__ void transpose(double *mat, double *mat_t, int rows, int cols)
+{
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
     for (int row = x; row < rows; row += stride_x)
     {
-        for (int col = y; col < cols; col += stride_y) {
+        for (int col = y; col < cols; col += stride_y)
+        {
             mat_t[col * rows + row] = mat[row * cols + col];
         }
     }
@@ -174,12 +193,11 @@ void transpose(double* mat, double* mat_t, int rows, int cols) {
     n - Shared dimension of matrices
     o - Trailing dimension of second matrix
 */
-__global__
-void mat_mul(double* a, double* b, double* c, int m, int n, int o)
+__global__ void mat_mul(double *a, double *b, double *c, int m, int n, int o)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
@@ -197,45 +215,46 @@ void mat_mul(double* a, double* b, double* c, int m, int n, int o)
     }
 }
 
-
 // Each column is a data point
-__global__ 
-void copy_data(double* dataset, double* dest, int* indices, int rows, int batch_size) {
+__global__ void copy_data(double *dataset, double *dest, int *indices, int rows, int batch_size)
+{
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int b = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (i < rows && b < batch_size) {
+    if (i < rows && b < batch_size)
+    {
         int data_index = indices[b];
         dest[i * batch_size + b] = dataset[data_index * rows + i];
-    }    
+    }
 }
 
-__global__ 
-void init_bias_cuda(double* w, int size) {
+__global__ void init_bias_cuda(double *w, int size)
+{
     int index = threadIdx.x + blockIdx.x * blockDim.x;
 
-    if (index != 0) return;
-    
-    for (int i = 0; i < size; i++) {
+    if (index != 0)
+        return;
+
+    for (int i = 0; i < size; i++)
+    {
         w[i] = 0;
     }
 }
 
-__global__ 
-void init_weights(double* w, int size)
+__global__ void init_weights(double *w, int size)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = blockDim.x * gridDim.x;
-    //printf("stride is: %d\n", stride);
+    // printf("stride is: %d\n", stride);
 
     // if (index != 0) return;
 
-    //auto epsilon = pow(6, 0.5) / pow(size, 0.5);
+    // auto epsilon = pow(6, 0.5) / pow(size, 0.5);
 
     for (int i = index; i < size; i += stride)
     {
         w[i] = (w[i] * 0.2) - 0.1;
-        //w[i] = w[i] * epsilon * 2 - epsilon;
+        // w[i] = w[i] * epsilon * 2 - epsilon;
     }
 }
 
@@ -284,17 +303,15 @@ public:
         // Weight matrix for second layer
         cudaMallocManaged(&a, hidden_layer_size * input_layer_size * sizeof(double));
         curandGenerateUniformDouble(prng, a, hidden_layer_size * input_layer_size);
-        //init_weights<<<calc_dim3(hidden_layer_size * input_layer_size), BLOCK_SIZE>>>(a, hidden_layer_size * input_layer_size);
-        //init_weights<<<1, BLOCK_SIZE, 0, stream_a>>>(a, hidden_layer_size * input_layer_size);
+        // init_weights<<<calc_dim3(hidden_layer_size * input_layer_size), BLOCK_SIZE>>>(a, hidden_layer_size * input_layer_size);
+        // init_weights<<<1, BLOCK_SIZE, 0, stream_a>>>(a, hidden_layer_size * input_layer_size);
         cudaDeviceSynchronize();
         init_weights_cpu(a, hidden_layer_size, input_layer_size);
-        
 
         cudaStream_t stream_a_bias;
         cudaStreamCreate(&stream_a_bias);
         cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
         init_bias_cuda<<<1, 1, 0, stream_a_bias>>>(a_bias, hidden_layer_size);
-        
 
         cudaStream_t stream_b;
         cudaStreamCreate(&stream_b);
@@ -303,19 +320,18 @@ public:
         // Weight matrix for output layer
         cudaMallocManaged(&b, output_layer_size * hidden_layer_size * sizeof(double));
         curandGenerateUniformDouble(prng, b, output_layer_size * hidden_layer_size);
-        //init_weights<<<calc_dim3(output_layer_size * hidden_layer_size), BLOCK_SIZE>>>(b, output_layer_size * hidden_layer_size);
-        //init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
-        //init_weights<<<1, BLOCK_SIZE, 0, stream_b>>>(b, output_layer_size * hidden_layer_size);
+        // init_weights<<<calc_dim3(output_layer_size * hidden_layer_size), BLOCK_SIZE>>>(b, output_layer_size * hidden_layer_size);
+        // init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
+        // init_weights<<<1, BLOCK_SIZE, 0, stream_b>>>(b, output_layer_size * hidden_layer_size);
         cudaDeviceSynchronize();
         init_weights_cpu(b, output_layer_size, hidden_layer_size);
-        
 
         cudaStream_t stream_b_bias;
         cudaStreamCreate(&stream_b_bias);
 
         cudaMallocManaged(&b_bias, output_layer_size * sizeof(double));
-        init_bias_cuda << <1, 1, 0, stream_b_bias>> > (b_bias, output_layer_size);
-        
+        init_bias_cuda<<<1, 1, 0, stream_b_bias>>>(b_bias, output_layer_size);
+
         cudaDeviceSynchronize();
 
         cudaMallocManaged(&input_layer, input_layer_size * SIZE_OF_TRAIN * sizeof(double));
@@ -336,7 +352,7 @@ public:
         cudaMallocManaged(&hidden_layer_t, SIZE_OF_TRAIN * hidden_layer_size * sizeof(double));
         cudaMallocManaged(&gradient_a, hidden_layer_size * input_layer_size * sizeof(double));
         cudaMallocManaged(&gradient_b, output_layer_size * hidden_layer_size * sizeof(double));
-        
+
         cudaStreamDestroy(stream_a);
         cudaStreamDestroy(stream_a_bias);
         cudaStreamDestroy(stream_b);
@@ -344,8 +360,6 @@ public:
 
         timer.stop();
     }
-
-    
 
     void learn(int num_of_epochs)
     {
@@ -358,12 +372,12 @@ public:
 
         for (int i = 0; i < num_of_epochs; i++)
         {
-            //printf("Epoch: %d\n", i);
+            // printf("Epoch: %d\n", i);
             shuffle(indices.begin(), indices.end(), g);
 
             for (int j = 0; j < indices.size() - batch_size + 1; j += batch_size)
             {
-                
+
                 if (j % (10 * batch_size) == 0 || indices.size() - j > batch_size)
                 {
                     std::cerr << "\rEpoch: " << i << " | Progress: " << (j + batch_size) * 100 / ((indices.size() / batch_size) * batch_size) << "% " << std::flush;
@@ -377,80 +391,80 @@ public:
 
                 cudaMemPrefetchAsync(batch_indices, batch_size * sizeof(int), deviceId);
 
-                copy_data << < dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (mnist.x_train, input_layer, batch_indices, input_layer_size, batch_size);
-                
+                copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_train, input_layer, batch_indices, input_layer_size, batch_size);
+
                 forward();
 
-                set_up_y_truth << <dim3(calc_dim3(output_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (mnist.y_train, y_truth, batch_indices, batch_size);
+                set_up_y_truth<<<dim3(calc_dim3(output_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.y_train, y_truth, batch_indices, output_layer_size, batch_size);
 
                 back_prop();
                 adjust_weights();
 
                 cudaDeviceSynchronize();
             }
-            //start_timer();
-            printf("| Train accuracy: %f ", calc_train_accuracy());
-            //end_timer();
-            //start_timer();
-            printf("| Test accuracy: %f\n", calc_test_accuracy());
-            //end_timer();
+            // start_timer();
+            printf("| Train accuracy: %f%% ", calc_train_accuracy());
+            // end_timer();
+            // start_timer();
+            printf("| Test accuracy: %f%%\n", calc_test_accuracy());
+            // end_timer();
         }
-        //printf("| Test accuracy: %f\n", calc_test_accuracy());
+        // printf("| Test accuracy: %f\n", calc_test_accuracy());
     }
 
     void forward()
     {
         int grid_col_dims = 512;
         // a: 16 * input_layer_size, input_layer: input_layer_size * batch_size
-        //start_time();
-        mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> >(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
-        add_bias << <dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (hidden_layer, a_bias, hidden_layer_size, batch_size);
-        tanh<<<calc_dim3(hidden_layer_size * grid_col_dims), BLOCK_SIZE >> >(hidden_layer, hidden_layer_size, batch_size);
-        
+        // start_time();
+        mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
+        add_bias<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer, a_bias, hidden_layer_size, batch_size);
+        tanh<<<calc_dim3(hidden_layer_size * grid_col_dims), BLOCK_SIZE>>>(hidden_layer, hidden_layer_size, batch_size);
+
         // b: output_layer_size * 16, hidden_layer: 16 * 1
-        mat_mul << <dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (b, hidden_layer, output_layer, output_layer_size, hidden_layer_size, batch_size);
-        add_bias << <dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (output_layer, b_bias, output_layer_size, batch_size);
-        sigmoid<<<calc_dim3(output_layer_size * grid_col_dims), BLOCK_SIZE >>>(output_layer, output_layer_size, batch_size);
-        //end_time();
+        mat_mul<<<dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(b, hidden_layer, output_layer, output_layer_size, hidden_layer_size, batch_size);
+        add_bias<<<dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(output_layer, b_bias, output_layer_size, batch_size);
+        sigmoid<<<calc_dim3(output_layer_size * grid_col_dims), BLOCK_SIZE>>>(output_layer, output_layer_size, batch_size);
+        // end_time();
     }
 
-    int calc_dim3(int num) {
+    int calc_dim3(int num)
+    {
         return (num + BLOCK_SIZE - 1) / BLOCK_SIZE;
     }
 
     void back_prop()
     {
-        sigmoid_derivative << <dim3(calc_dim3(output_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (y_truth, output_layer, output_layer_error, output_layer_size, batch_size);
-        tanh_derivative << <dim3(calc_dim3(hidden_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (output_layer_error, b, hidden_layer, hidden_layer_error, output_layer_size, hidden_layer_size, batch_size);
+        sigmoid_derivative<<<dim3(calc_dim3(output_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(y_truth, output_layer, output_layer_error, output_layer_size, batch_size);
+        tanh_derivative<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(output_layer_error, b, hidden_layer, hidden_layer_error, output_layer_size, hidden_layer_size, batch_size);
 
-        calc_avgs << <calc_dim3(output_layer_size), calc_dim3(batch_size), BLOCK_SIZE >> > (output_layer_error, output_layer_error_avgs, output_layer_size, batch_size);
-        calc_avgs << <calc_dim3(hidden_layer_size), calc_dim3(batch_size), BLOCK_SIZE >> > (hidden_layer_error, hidden_layer_error_avgs, hidden_layer_size, batch_size);
-
+        calc_avgs<<<calc_dim3(output_layer_size), calc_dim3(batch_size), BLOCK_SIZE>>>(output_layer_error, output_layer_error_avgs, output_layer_size, batch_size);
+        calc_avgs<<<calc_dim3(hidden_layer_size), calc_dim3(batch_size), BLOCK_SIZE>>>(hidden_layer_error, hidden_layer_error_avgs, hidden_layer_size, batch_size);
     }
 
     void adjust_weights()
-    {   
-        //cudaStream_t stream_a;
-        //cudaStreamCreate(&stream_a);
-        transpose << <dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (input_layer, input_layer_t, input_layer_size, batch_size);
-        
-        // a: 16 * input_layer_size
-        grad_desc_bias << <calc_dim3(hidden_layer_size), BLOCK_SIZE >> > (a_bias, hidden_layer_error_avgs, learning_rate, hidden_layer_size);
-        mat_mul << <dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (hidden_layer_error, input_layer_t, gradient_a, hidden_layer_size, batch_size, input_layer_size);
-        grad_desc_weights << <dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (a, gradient_a, learning_rate, hidden_layer_size, input_layer_size);
-        //cudaStreamDestroy(stream_a);
+    {
+        // cudaStream_t stream_a;
+        // cudaStreamCreate(&stream_a);
+        transpose<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(input_layer, input_layer_t, input_layer_size, batch_size);
 
-        //cudaStream_t stream_b;
-        //cudaStreamCreate(&stream_b);
-        transpose << <dim3(calc_dim3(hidden_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (hidden_layer, hidden_layer_t, hidden_layer_size, batch_size);
+        // a: 16 * input_layer_size
+        grad_desc_bias<<<calc_dim3(hidden_layer_size), BLOCK_SIZE>>>(a_bias, hidden_layer_error_avgs, learning_rate, hidden_layer_size);
+        mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer_error, input_layer_t, gradient_a, hidden_layer_size, batch_size, input_layer_size);
+        grad_desc_weights<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(a, gradient_a, learning_rate, hidden_layer_size, input_layer_size);
+        // cudaStreamDestroy(stream_a);
+
+        // cudaStream_t stream_b;
+        // cudaStreamCreate(&stream_b);
+        transpose<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer, hidden_layer_t, hidden_layer_size, batch_size);
         // b: output_layer_size * 16
-        grad_desc_bias << <calc_dim3(output_layer_size), BLOCK_SIZE>> > (b_bias, output_layer_error_avgs, learning_rate, output_layer_size);
-        mat_mul << <dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (output_layer_error, hidden_layer_t, gradient_b, output_layer_size, batch_size, hidden_layer_size);
-        grad_desc_weights << <dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (b, gradient_b, learning_rate, output_layer_size, hidden_layer_size);
-        //cudaStreamDestroy(stream_b);
+        grad_desc_bias<<<calc_dim3(output_layer_size), BLOCK_SIZE>>>(b_bias, output_layer_error_avgs, learning_rate, output_layer_size);
+        mat_mul<<<dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(output_layer_error, hidden_layer_t, gradient_b, output_layer_size, batch_size, hidden_layer_size);
+        grad_desc_weights<<<dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(b, gradient_b, learning_rate, output_layer_size, hidden_layer_size);
+        // cudaStreamDestroy(stream_b);
     }
 
-    int predict(double* input_layer)
+    int predict(double *input_layer)
     {
         forward();
 
@@ -470,7 +484,7 @@ public:
 
     float calc_train_accuracy()
     {
-        
+
         int num_correct = 0;
 
         transpose<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_train, input_layer, input_layer_size, SIZE_OF_TRAIN);
@@ -518,14 +532,14 @@ public:
                 batch_indices[j] = i + j;
             }
 
-            copy_data << <dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (mnist.x_test, input_layer, batch_indices, input_layer_size, batch_size);
+            copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_test, input_layer, batch_indices, input_layer_size, batch_size);
             cudaDeviceSynchronize();
 
             int true_labels[10000];
 
             for (int j = 0; j < batch_size; j++)
             {
-                true_labels[j] = (int) mnist.y_test[i + j];
+                true_labels[j] = (int)mnist.y_test[i + j];
             }
 
             forward();
@@ -552,31 +566,31 @@ public:
             }
         }
 
-        return num_correct / (float) num_counted * 100;
+        return num_correct / (float)num_counted * 100;
     }
 
 public:
     MNIST mnist;
 
-    double* a;
-    double* b;
+    double *a;
+    double *b;
 
-    double* a_bias;
-    double* b_bias;
+    double *a_bias;
+    double *b_bias;
 
-    double* input_layer;
-    double* hidden_layer;
-    double* output_layer;
+    double *input_layer;
+    double *hidden_layer;
+    double *output_layer;
 
-    double* hidden_layer_error;
-    double* output_layer_error;
+    double *hidden_layer_error;
+    double *output_layer_error;
 
-    double* hidden_layer_error_avgs;
-    double* output_layer_error_avgs;
+    double *hidden_layer_error_avgs;
+    double *output_layer_error_avgs;
 
-    int* batch_indices;
+    int *batch_indices;
 
-    double* y_truth;
+    double *y_truth;
 
     double learning_rate;
 
@@ -584,11 +598,11 @@ public:
     int hidden_layer_size;
     int output_layer_size;
     int batch_size;
-    
-    double* input_layer_t;
-    double* hidden_layer_t;
-    double* gradient_a;
-    double* gradient_b;
+
+    double *input_layer_t;
+    double *hidden_layer_t;
+    double *gradient_a;
+    double *gradient_b;
 
     int deviceId;
     int numberOfSMs;

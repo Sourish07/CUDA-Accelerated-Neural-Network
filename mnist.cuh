@@ -18,7 +18,8 @@ using namespace std;
 class MNIST
 {
 public:
-    void read_data() {
+    void read_data()
+    {
         cudaMallocManaged(&x_train, SIZE_OF_TRAIN * 784 * sizeof(double));
         cudaMallocManaged(&y_train, SIZE_OF_TRAIN * sizeof(double));
 
@@ -36,19 +37,23 @@ public:
         read_data("data/y_test.csv", y_test);
     }
 
-    void read_x_data(string file_name, double* var) {
+    void read_data(string file_name, double *var)
+    {
         printf("Reading %s\n", file_name.c_str());
         ifstream file(file_name);
         string line = "";
 
         int counter = 0;
         getline(file, line); // skip first line
-        while (getline(file, line)) {
+        while (getline(file, line))
+        {
             stringstream input_line(line);
 
             string tempString = "";
             getline(input_line, tempString, ','); // skip first column
-            while (getline(input_line, tempString, ',')) {
+
+            while (getline(input_line, tempString, ','))
+            {
                 var[counter] = (double)atof(tempString.c_str());
                 counter++;
             }
@@ -56,49 +61,8 @@ public:
         }
     }
 
-    void read_y_data(string file_name, double* var) {
-        printf("Reading %s\n", file_name.c_str());
-        ifstream file(file_name);
-        string line = "";
-
-        int counter = 0;
-        getline(file, line); // skip first line
-        while (getline(file, line)) {
-            stringstream input_line(line);
-
-            string tempString = "";
-            getline(input_line, tempString, ','); // skip first column
-
-            while (getline(input_line, tempString, ',')) {
-                var[counter] = (double)atof(tempString.c_str());
-                counter++;
-            }
-            line = "";
-        }
-    }
-
-    void read_data(string file_name, double* var) {
-        printf("Reading %s\n", file_name.c_str());
-        ifstream file(file_name);
-        string line = "";
-
-        int counter = 0;
-        getline(file, line); // skip first line
-        while (getline(file, line)) {
-            stringstream input_line(line);
-
-            string tempString = "";
-            getline(input_line, tempString, ','); // skip first column
-
-            while (getline(input_line, tempString, ',')) {
-                var[counter] = (double)atof(tempString.c_str());
-                counter++;
-            }
-            line = "";
-        }
-    }
-
-    void normalize() {
+    void normalize()
+    {
         train_mean = 0;
         train_std = 0;
 
@@ -125,14 +89,21 @@ public:
         {
             x_test[i] = (x_test[i] - train_mean) / train_std;
         }
+    }
 
+    ~MNIST()
+    {
+        cudaFree(x_train);
+        cudaFree(y_train);
+        cudaFree(x_test);
+        cudaFree(y_test);
     }
 
 public:
-    double* x_train;
-    double* y_train;
-    double* x_test;
-    double* y_test;
+    double *x_train;
+    double *y_train;
+    double *x_test;
+    double *y_test;
 
     double train_mean;
     double train_std;

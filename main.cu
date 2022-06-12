@@ -9,7 +9,7 @@
 int main()
 {
     auto nn = MNISTNeuralNetwork();
-    
+
     auto timer = Timer("Network-GPU");
     nn.learn(5);
     timer.stop();

@@ -7,10 +7,6 @@
 
 using namespace std;
 
-// #define SIZE_OF_TRAIN 60000
-// #define SIZE_OF_TEST 10000
-
-// input_layer_size * hidden_layer_size * output_layer_size
 class NeuralNetwork
 {
 public:
@@ -32,8 +28,6 @@ public:
 
         a_bias = (double *)malloc(hidden_layer_size * sizeof(double));
         init_bias(a_bias, hidden_layer_size);
-        // a_rows = input_layer_size;
-        // a_cols = hidden_layer_size;
 
         // Weight matrix for output layer
         b = (double *)malloc(output_layer_size * hidden_layer_size * sizeof(double));
@@ -41,9 +35,6 @@ public:
 
         b_bias = (double *)malloc(output_layer_size * sizeof(double));
         init_bias(b_bias, output_layer_size);
-
-        // b_rows = hidden_layer_size;
-        // b_cols = output_layer_size;
 
         hidden_layer = (double *)malloc(hidden_layer_size * batch_size * sizeof(double));
         hidden_layer_error = (double *)malloc(hidden_layer_size * batch_size * sizeof(double));
@@ -65,7 +56,6 @@ public:
 
         for (int i = 0; i < num_of_epochs; i++)
         {
-            // printf("Epoch: %d\n", i);
             shuffle(indices.begin(), indices.end(), g);
 
             for (int j = 0; j < indices.size(); j++)
@@ -73,11 +63,6 @@ public:
                 auto start = std::chrono::high_resolution_clock::now();
                 int index = indices[j];
                 std::cerr << "\rEpoch: " << i << " | Progress: " << (j + batch_size) * 100 / ((indices.size() / batch_size) * batch_size) << "% " << std::flush;
-                if (j % (10 * batch_size) == 0 || indices.size() - j >= batch_size)
-                {
-                    //printf("Training example: %d\n", j);
-                    
-                }
 
                 double input_layer[784]; // Had to hardcode input size
                 for (int k = 0; k < input_layer_size; k++)
@@ -105,12 +90,9 @@ public:
 
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-                //std::cout << "CPU-func: Time took: " << duration.count() << " microseconds." << std::endl;
             }
-            printf("| Train accuracy: %f ", calc_train_accuracy());
-            printf("| Test accuracy: %f\n", calc_test_accuracy());
-            calc_train_accuracy();
-            calc_test_accuracy();
+            printf("| Train accuracy: %f%% ", calc_train_accuracy());
+            printf("| Test accuracy: %f%%\n", calc_test_accuracy());
         }
     }
 
@@ -121,7 +103,7 @@ public:
         mat_mul(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        //std::cout << "CPU-mat_mul: Time took: " << duration.count() << " microseconds." << std::endl;
+        // std::cout << "CPU-mat_mul: Time took: " << duration.count() << " microseconds." << std::endl;
 
         for (int i = 0; i < hidden_layer_size; i++)
         {
@@ -240,14 +222,14 @@ public:
     */
     void mat_mul(double *a, double *b, double *c, int m, int n, int o)
     {
-        
+
         // First row of first matrix
         for (int i = 0; i < m; i++)
         {
             // First column of second matrix
             for (int j = 0; j < o; j++)
             {
-                
+
                 double sum = 0;
                 for (int k = 0; k < n; k++)
                 {
@@ -300,8 +282,7 @@ public:
                 num_correct++;
             }
         }
-        return num_correct / (double)SIZE_OF_TRAIN;
-        //printf("Train accuracy: %f\n", percentage);
+        return num_correct / (double)SIZE_OF_TRAIN * 100;
     }
 
     double calc_test_accuracy()
@@ -328,19 +309,8 @@ public:
             }
         }
 
-        return num_correct / (double)SIZE_OF_TEST;
-        //printf("Test accuracy: %f\n", percentage);
+        return num_correct / (double)SIZE_OF_TEST * 100;
     }
-
-    // void debug(double *a, int size)
-    // {
-    //     double v[size];
-    //     for (int i = 0; i < size; i++)
-    //     {
-    //         v[i] = a[i];
-    //     }
-    //     int x = 0;
-    // }
 
 public:
     MNIST mnist;
@@ -359,11 +329,6 @@ public:
 
     double learning_rate;
 
-    // int a_rows;
-    // int a_cols;
-
-    // int b_rows;
-    // int b_cols;
     int input_layer_size;
     int hidden_layer_size;
     int output_layer_size;

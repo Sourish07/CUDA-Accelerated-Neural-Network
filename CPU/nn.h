@@ -7,14 +7,14 @@
 
 using namespace std;
 
-#define SIZE_OF_TRAIN 60000
-#define SIZE_OF_TEST 10000
+// #define SIZE_OF_TRAIN 60000
+// #define SIZE_OF_TEST 10000
 
-// 784 * 16 * 10
+// input_layer_size * hidden_layer_size * output_layer_size
 class NeuralNetwork
 {
 public:
-    NeuralNetwork(int b_s)
+    NeuralNetwork()
     {
         mnist = MNIST();
         mnist.read_data();
@@ -22,30 +22,34 @@ public:
 
         batch_size = 1;
 
-        // Weight matrix for second layer
-        a = (double *)malloc(16 * 784 * sizeof(double));
-        init_weights(a, 16, 784);
+        input_layer_size = 784;
+        hidden_layer_size = 128;
+        output_layer_size = 10;
 
-        a_bias = (double *)malloc(16 * sizeof(double));
-        init_bias(a_bias, 16);
-        a_rows = 784;
-        a_cols = 16;
+        // Weight matrix for second layer
+        a = (double *)malloc(hidden_layer_size * input_layer_size * sizeof(double));
+        init_weights(a, hidden_layer_size, input_layer_size);
+
+        a_bias = (double *)malloc(hidden_layer_size * sizeof(double));
+        init_bias(a_bias, hidden_layer_size);
+        // a_rows = input_layer_size;
+        // a_cols = hidden_layer_size;
 
         // Weight matrix for output layer
-        b = (double *)malloc(10 * 16 * sizeof(double));
-        init_weights(b, 10, 16);
+        b = (double *)malloc(output_layer_size * hidden_layer_size * sizeof(double));
+        init_weights(b, output_layer_size, hidden_layer_size);
 
-        b_bias = (double *)malloc(10 * sizeof(double));
-        init_bias(b_bias, 10);
+        b_bias = (double *)malloc(output_layer_size * sizeof(double));
+        init_bias(b_bias, output_layer_size);
 
-        b_rows = 16;
-        b_cols = 10;
+        // b_rows = hidden_layer_size;
+        // b_cols = output_layer_size;
 
-        hidden_layer = (double *)malloc(16 * batch_size * sizeof(double));
-        hidden_layer_error = (double *)malloc(16 * batch_size * sizeof(double));
+        hidden_layer = (double *)malloc(hidden_layer_size * batch_size * sizeof(double));
+        hidden_layer_error = (double *)malloc(hidden_layer_size * batch_size * sizeof(double));
 
-        output_layer = (double *)malloc(10 * batch_size * sizeof(double));
-        output_layer_error = (double *)malloc(10 * batch_size * sizeof(double));
+        output_layer = (double *)malloc(output_layer_size * batch_size * sizeof(double));
+        output_layer_error = (double *)malloc(output_layer_size * batch_size * sizeof(double));
 
         learning_rate = 0.01;
     }
@@ -61,32 +65,34 @@ public:
 
         for (int i = 0; i < num_of_epochs; i++)
         {
-            printf("Epoch: %d\n", i);
+            // printf("Epoch: %d\n", i);
             shuffle(indices.begin(), indices.end(), g);
 
             for (int j = 0; j < indices.size(); j++)
             {
                 auto start = std::chrono::high_resolution_clock::now();
                 int index = indices[j];
-                if (j % 10000 == 0)
+                std::cerr << "\rEpoch: " << i << " | Progress: " << (j + batch_size) * 100 / ((indices.size() / batch_size) * batch_size) << "% " << std::flush;
+                if (j % (10 * batch_size) == 0 || indices.size() - j >= batch_size)
                 {
-                    printf("Training example: %d\n", j);
+                    //printf("Training example: %d\n", j);
+                    
                 }
 
-                double input_layer[784];
-                for (int k = 0; k < 784; k++)
+                double input_layer[784]; // Had to hardcode input size
+                for (int k = 0; k < input_layer_size; k++)
                 {
                     input_layer[k] = 0;
                 }
 
-                for (int k = 0; k < 784; k++)
+                for (int k = 0; k < input_layer_size; k++)
                 {
-                    input_layer[k] = mnist.x_train[index * 784 + k];
+                    input_layer[k] = mnist.x_train[index * input_layer_size + k];
                 }
                 forward(input_layer);
 
                 double y_truth[10];
-                for (int k = 0; k < 10; k++)
+                for (int k = 0; k < output_layer_size; k++)
                 {
                     y_truth[k] = 0;
                 }
@@ -101,6 +107,8 @@ public:
                 auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
                 //std::cout << "CPU-func: Time took: " << duration.count() << " microseconds." << std::endl;
             }
+            printf("| Train accuracy: %f ", calc_train_accuracy());
+            printf("| Test accuracy: %f\n", calc_test_accuracy());
             calc_train_accuracy();
             calc_test_accuracy();
         }
@@ -108,45 +116,45 @@ public:
 
     void forward(double *input_layer)
     {
-        // a: 16 * 784, input_layer: 784 * 1
+        // a: hidden_layer_size * input_layer_size, input_layer: input_layer_size * 1
         auto start = std::chrono::high_resolution_clock::now();
-        mat_mul(a, input_layer, hidden_layer, 16, 784, batch_size);
+        mat_mul(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         //std::cout << "CPU-mat_mul: Time took: " << duration.count() << " microseconds." << std::endl;
 
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < hidden_layer_size; i++)
         {
             hidden_layer[i] += a_bias[i];
         }
 
-        tanh(hidden_layer, 16);
+        tanh(hidden_layer, hidden_layer_size);
 
-        // b: 10 * 16, hidden_layer: 16 * 1
-        mat_mul(b, hidden_layer, output_layer, 10, 16, batch_size);
-        for (int i = 0; i < 10; i++)
+        // b: output_layer_size * hidden_layer_size, hidden_layer: hidden_layer_size * 1
+        mat_mul(b, hidden_layer, output_layer, output_layer_size, hidden_layer_size, batch_size);
+        for (int i = 0; i < output_layer_size; i++)
         {
             output_layer[i] += b_bias[i];
         }
 
-        sigmoid(output_layer, 10);
+        sigmoid(output_layer, output_layer_size);
     }
 
     void back_prop(double *y_truth)
     {
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < output_layer_size; i++)
         {
             auto error_prime = -1 * (y_truth[i] - output_layer[i]);
             auto sigmoid_derivative = output_layer[i] * (1 - output_layer[i]);
             output_layer_error[i] = error_prime * sigmoid_derivative;
         }
 
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < hidden_layer_size; i++)
         {
             double error_prime = 0;
-            for (int j = 0; j < 10; j++)
+            for (int j = 0; j < output_layer_size; j++)
             {
-                error_prime += output_layer_error[j] * b[j * 16 + i]; // b: 10 * 16
+                error_prime += output_layer_error[j] * b[j * hidden_layer_size + i]; // b: output_layer_size * hidden_layer_size
             }
             double tanh_derivative = 1. - (hidden_layer[i] * hidden_layer[i]);
             hidden_layer_error[i] = error_prime * tanh_derivative;
@@ -155,31 +163,31 @@ public:
 
     void adjust_weights(double *x)
     {
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < hidden_layer_size; i++)
         {
             a_bias[i] -= learning_rate * hidden_layer_error[i];
         }
 
-        // a: 16 * 784
-        for (int rows = 0; rows < 16; rows++)
+        // a: hidden_layer_size * input_layer_size
+        for (int rows = 0; rows < hidden_layer_size; rows++)
         {
-            for (int cols = 0; cols < 784; cols++)
+            for (int cols = 0; cols < input_layer_size; cols++)
             {
-                a[rows * 784 + cols] -= x[cols] * learning_rate * hidden_layer_error[rows];
+                a[rows * input_layer_size + cols] -= x[cols] * learning_rate * hidden_layer_error[rows];
             }
         }
 
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < output_layer_size; i++)
         {
             b_bias[i] -= learning_rate * output_layer_error[i];
         }
 
-        // b: 10 * 16
-        for (int rows = 0; rows < 10; rows++)
+        // b: output_layer_size * hidden_layer_size
+        for (int rows = 0; rows < output_layer_size; rows++)
         {
-            for (int cols = 0; cols < 16; cols++)
+            for (int cols = 0; cols < hidden_layer_size; cols++)
             {
-                b[rows * 16 + cols] -= hidden_layer[cols] * learning_rate * output_layer_error[rows];
+                b[rows * hidden_layer_size + cols] -= hidden_layer[cols] * learning_rate * output_layer_error[rows];
             }
         }
     }
@@ -190,7 +198,7 @@ public:
 
         auto prediction = 0;
         double max_value = 0;
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < output_layer_size; i++)
         {
             if (output_layer[i] > max_value)
             {
@@ -269,19 +277,19 @@ public:
         }
     }
 
-    void calc_train_accuracy()
+    double calc_train_accuracy()
     {
         int num_correct = 0;
         for (int i = 0; i < SIZE_OF_TRAIN; i++)
         {
             double test_data[784];
-            for (int k = 0; k < 784; k++)
+            for (int k = 0; k < input_layer_size; k++)
             {
                 test_data[k] = 0;
             }
-            for (int j = 0; j < 784; j++)
+            for (int j = 0; j < input_layer_size; j++)
             {
-                test_data[j] = mnist.x_train[i * 784 + j];
+                test_data[j] = mnist.x_train[i * input_layer_size + j];
             }
 
             int true_label = (int)mnist.y_train[i];
@@ -292,23 +300,23 @@ public:
                 num_correct++;
             }
         }
-        double percentage = num_correct / (double)SIZE_OF_TRAIN;
-        printf("Train accuracy: %f\n", percentage);
+        return num_correct / (double)SIZE_OF_TRAIN;
+        //printf("Train accuracy: %f\n", percentage);
     }
 
-    void calc_test_accuracy()
+    double calc_test_accuracy()
     {
         int num_correct = 0;
         for (int i = 0; i < SIZE_OF_TEST; i++)
         {
             double test_data[784];
-            for (int k = 0; k < 784; k++)
+            for (int k = 0; k < input_layer_size; k++)
             {
                 test_data[k] = 0;
             }
-            for (int j = 0; j < 784; j++)
+            for (int j = 0; j < input_layer_size; j++)
             {
-                test_data[j] = mnist.x_test[i * 784 + j];
+                test_data[j] = mnist.x_test[i * input_layer_size + j];
             }
 
             int true_label = (int)mnist.y_test[i];
@@ -320,19 +328,19 @@ public:
             }
         }
 
-        double percentage = num_correct / (double)SIZE_OF_TEST;
-        printf("Test accuracy: %f\n", percentage);
+        return num_correct / (double)SIZE_OF_TEST;
+        //printf("Test accuracy: %f\n", percentage);
     }
 
-    void debug(double *a, int size)
-    {
-        double v[size];
-        for (int i = 0; i < size; i++)
-        {
-            v[i] = a[i];
-        }
-        int x = 0;
-    }
+    // void debug(double *a, int size)
+    // {
+    //     double v[size];
+    //     for (int i = 0; i < size; i++)
+    //     {
+    //         v[i] = a[i];
+    //     }
+    //     int x = 0;
+    // }
 
 public:
     MNIST mnist;
@@ -351,11 +359,14 @@ public:
 
     double learning_rate;
 
-    int a_rows;
-    int a_cols;
+    // int a_rows;
+    // int a_cols;
 
-    int b_rows;
-    int b_cols;
+    // int b_rows;
+    // int b_cols;
+    int input_layer_size;
+    int hidden_layer_size;
+    int output_layer_size;
 
     int batch_size;
 };

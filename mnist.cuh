@@ -30,10 +30,10 @@ public:
         cudaMemPrefetchAsync(x_test, SIZE_OF_TEST * 784 * sizeof(double), cudaCpuDeviceId);
         cudaMemPrefetchAsync(y_test, SIZE_OF_TEST * sizeof(double), cudaCpuDeviceId);
 
-        read_x_data("data/x_train.csv", x_train);
-        read_y_data("data/y_train.csv", y_train);
-        read_x_data("data/x_test.csv", x_test);
-        read_y_data("data/y_test.csv", y_test);
+        read_data("data/x_train.csv", x_train);
+        read_data("data/y_train.csv", y_train);
+        read_data("data/x_test.csv", x_test);
+        read_data("data/y_test.csv", y_test);
     }
 
     void read_x_data(string file_name, double* var) {
@@ -57,6 +57,27 @@ public:
     }
 
     void read_y_data(string file_name, double* var) {
+        printf("Reading %s\n", file_name.c_str());
+        ifstream file(file_name);
+        string line = "";
+
+        int counter = 0;
+        getline(file, line); // skip first line
+        while (getline(file, line)) {
+            stringstream input_line(line);
+
+            string tempString = "";
+            getline(input_line, tempString, ','); // skip first column
+
+            while (getline(input_line, tempString, ',')) {
+                var[counter] = (double)atof(tempString.c_str());
+                counter++;
+            }
+            line = "";
+        }
+    }
+
+    void read_data(string file_name, double* var) {
         printf("Reading %s\n", file_name.c_str());
         ifstream file(file_name);
         string line = "";

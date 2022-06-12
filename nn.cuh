@@ -3,7 +3,6 @@
 #include <random>
 #include <algorithm>
 
-
 #include <cublas_v2.h>
 #include <curand.h>
 
@@ -14,9 +13,6 @@
 #include "timer.h"
 
 using namespace std;
-
-// #define SIZE_OF_TRAIN 60000
-// #define SIZE_OF_TEST 10000
 
 #define BLOCK_SIZE 32
 
@@ -211,15 +207,32 @@ __global__
 void init_weights(double* w, int size)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
+    int stride = blockDim.x * gridDim.x;
+    //printf("stride is: %d\n", stride);
 
-    if (index != 0) return;
+    // if (index != 0) return;
 
     //auto epsilon = pow(6, 0.5) / pow(size, 0.5);
 
-    for (int i = 0; i < size; i++)
+    for (int i = index; i < size; i += stride)
     {
         w[i] = (w[i] * 0.2) - 0.1;
         //w[i] = w[i] * epsilon * 2 - epsilon;
+    }
+}
+
+void init_weights_cpu(double *w, int rows, int cols)
+{
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_real_distribution<double> dist(-0.1, 0.1);
+
+    for (int i = 0; i < rows; i++)
+    {
+        for (int j = 0; j < cols; j++)
+        {
+            w[i * cols + j] = dist(gen);
+        }
     }
 }
 
@@ -229,35 +242,62 @@ class MNISTNeuralNetwork
 public:
     MNISTNeuralNetwork()
     {
+        cudaGetDevice(&deviceId);
+        cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
+
+        auto timer = Timer("Network init");
         mnist = MNIST();
         mnist.read_data();
         mnist.normalize();
 
         batch_size = 256;
         learning_rate = 0.01;
+
         input_layer_size = 784;
-        hidden_layer_size = 16;
+        hidden_layer_size = 256;
         output_layer_size = 10;
 
         curandGenerator_t prng;
         curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_DEFAULT);
 
+        cudaStream_t stream_a;
+        cudaStreamCreate(&stream_a);
+        curandSetStream(prng, stream_a);
         // Weight matrix for second layer
         cudaMallocManaged(&a, hidden_layer_size * input_layer_size * sizeof(double));
         curandGenerateUniformDouble(prng, a, hidden_layer_size * input_layer_size);
-        init_weights<<<1, 1>>>(a, hidden_layer_size * input_layer_size);
-
-        cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
-        init_bias_cuda<<<1, 1>>>(a_bias, hidden_layer_size);
+        //init_weights<<<calc_dim3(hidden_layer_size * input_layer_size), BLOCK_SIZE>>>(a, hidden_layer_size * input_layer_size);
+        //init_weights<<<1, BLOCK_SIZE, 0, stream_a>>>(a, hidden_layer_size * input_layer_size);
+        cudaDeviceSynchronize();
+        init_weights_cpu(a, hidden_layer_size, input_layer_size);
         
+
+        cudaStream_t stream_a_bias;
+        cudaStreamCreate(&stream_a_bias);
+        cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
+        init_bias_cuda<<<1, 1, 0, stream_a_bias>>>(a_bias, hidden_layer_size);
+        
+
+        cudaStream_t stream_b;
+        cudaStreamCreate(&stream_b);
+        curandSetStream(prng, stream_b);
 
         // Weight matrix for output layer
         cudaMallocManaged(&b, output_layer_size * hidden_layer_size * sizeof(double));
         curandGenerateUniformDouble(prng, b, output_layer_size * hidden_layer_size);
-        init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
+        //init_weights<<<calc_dim3(output_layer_size * hidden_layer_size), BLOCK_SIZE>>>(b, output_layer_size * hidden_layer_size);
+        //init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
+        //init_weights<<<1, BLOCK_SIZE, 0, stream_b>>>(b, output_layer_size * hidden_layer_size);
+        cudaDeviceSynchronize();
+        init_weights_cpu(b, output_layer_size, hidden_layer_size);
+        
+
+        cudaStream_t stream_b_bias;
+        cudaStreamCreate(&stream_b_bias);
 
         cudaMallocManaged(&b_bias, output_layer_size * sizeof(double));
-        init_bias_cuda << <1, 1 >> > (b_bias, output_layer_size);
+        init_bias_cuda << <1, 1, 0, stream_b_bias>> > (b_bias, output_layer_size);
+        
         cudaDeviceSynchronize();
 
         cudaMallocManaged(&input_layer, input_layer_size * SIZE_OF_TRAIN * sizeof(double));
@@ -278,9 +318,13 @@ public:
         cudaMallocManaged(&hidden_layer_t, SIZE_OF_TRAIN * hidden_layer_size * sizeof(double));
         cudaMallocManaged(&gradient_a, hidden_layer_size * input_layer_size * sizeof(double));
         cudaMallocManaged(&gradient_b, output_layer_size * hidden_layer_size * sizeof(double));
+        
+        cudaStreamDestroy(stream_a);
+        cudaStreamDestroy(stream_a_bias);
+        cudaStreamDestroy(stream_b);
+        cudaStreamDestroy(stream_b_bias);
 
-        cudaGetDevice(&deviceId);
-        cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
+        timer.stop();
     }
 
     
@@ -326,13 +370,14 @@ public:
 
                 cudaDeviceSynchronize();
             }
-            start_timer();
+            //start_timer();
             printf("| Train accuracy: %f ", calc_train_accuracy());
-            end_timer();
-            start_timer();
+            //end_timer();
+            //start_timer();
             printf("| Test accuracy: %f\n", calc_test_accuracy());
-            end_timer();
+            //end_timer();
         }
+        //printf("| Test accuracy: %f\n", calc_test_accuracy());
     }
 
     void forward()
@@ -366,19 +411,25 @@ public:
     }
 
     void adjust_weights()
-    {        
-        transpose << <dim3(calc_dim3(784), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (input_layer, input_layer_t, 784, batch_size);
-        transpose << <dim3(calc_dim3(16), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (hidden_layer, hidden_layer_t, 16, batch_size);
-
+    {   
+        //cudaStream_t stream_a;
+        //cudaStreamCreate(&stream_a);
+        transpose << <dim3(calc_dim3(784), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (input_layer, input_layer_t, 784, batch_size);
+        
         // a: 16 * 784
         grad_desc_bias << <calc_dim3(16), BLOCK_SIZE >> > (a_bias, hidden_layer_error_avgs, learning_rate, 16);
-        mat_mul << <dim3(calc_dim3(16), calc_dim3(784)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (hidden_layer_error, input_layer_t, gradient_a, 16, batch_size, 784);
-        grad_desc_weights << <dim3(calc_dim3(16), calc_dim3(784)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (a, gradient_a, learning_rate, 16, 784, batch_size);
-        
+        mat_mul << <dim3(calc_dim3(16), calc_dim3(784)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (hidden_layer_error, input_layer_t, gradient_a, 16, batch_size, 784);
+        grad_desc_weights << <dim3(calc_dim3(16), calc_dim3(784)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (a, gradient_a, learning_rate, 16, 784, batch_size);
+        //cudaStreamDestroy(stream_a);
+
+        //cudaStream_t stream_b;
+        //cudaStreamCreate(&stream_b);
+        transpose << <dim3(calc_dim3(16), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (hidden_layer, hidden_layer_t, 16, batch_size);
         // b: 10 * 16
-        grad_desc_bias << <calc_dim3(10), BLOCK_SIZE >> > (b_bias, output_layer_error_avgs, learning_rate, 10);
-        mat_mul << <dim3(calc_dim3(10), calc_dim3(16)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (output_layer_error, hidden_layer_t, gradient_b, 10, batch_size, 16);
-        grad_desc_weights << <dim3(calc_dim3(10), calc_dim3(16)), dim3(BLOCK_SIZE, BLOCK_SIZE) >> > (b, gradient_b, learning_rate, 10, 16, batch_size);
+        grad_desc_bias << <calc_dim3(10), BLOCK_SIZE>> > (b_bias, output_layer_error_avgs, learning_rate, 10);
+        mat_mul << <dim3(calc_dim3(10), calc_dim3(16)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (output_layer_error, hidden_layer_t, gradient_b, 10, batch_size, 16);
+        grad_desc_weights << <dim3(calc_dim3(10), calc_dim3(16)), dim3(BLOCK_SIZE, BLOCK_SIZE)>> > (b, gradient_b, learning_rate, 10, 16, batch_size);
+        //cudaStreamDestroy(stream_b);
     }
 
     int predict(double* input_layer)

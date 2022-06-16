@@ -173,17 +173,17 @@ __global__ void add_bias(double *layer, double *bias, int num, int batch_size)
 
 __global__ void transpose(double *mat, double *mat_t, int rows, int cols)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
     int stride_x = gridDim.x * blockDim.x;
     int stride_y = gridDim.y * blockDim.y;
 
-    for (int row = x; row < rows; row += stride_x)
+    for (int i = idx_x; i < rows; i += stride_x)
     {
-        for (int col = y; col < cols; col += stride_y)
+        for (int j = idx_y; j < cols; j += stride_y)
         {
-            mat_t[col * rows + row] = mat[row * cols + col];
+            mat_t[j * rows + i] = mat[i * cols + j];
         }
     }
 }
@@ -273,7 +273,6 @@ void init_weights_cpu(double *w, int rows, int cols)
     }
 }
 
-// input_layer_size * 16 * output_layer_size
 class MNISTNeuralNetwork
 {
 public:
@@ -294,43 +293,23 @@ public:
         hidden_layer_size = 64;
         output_layer_size = 10;
 
-        curandGenerator_t prng;
-        curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_DEFAULT);
-
-        cudaStream_t stream_a;
-        cudaStreamCreate(&stream_a);
-        curandSetStream(prng, stream_a);
         // Weight matrix for second layer
         cudaMallocManaged(&a, hidden_layer_size * input_layer_size * sizeof(double));
-        curandGenerateUniformDouble(prng, a, hidden_layer_size * input_layer_size);
-        // init_weights<<<calc_dim3(hidden_layer_size * input_layer_size), BLOCK_SIZE>>>(a, hidden_layer_size * input_layer_size);
-        // init_weights<<<1, BLOCK_SIZE, 0, stream_a>>>(a, hidden_layer_size * input_layer_size);
-        cudaDeviceSynchronize();
+        cudaMemPrefetchAsync(&a, hidden_layer_size * input_layer_size * sizeof(double), cudaCpuDeviceId);
         init_weights_cpu(a, hidden_layer_size, input_layer_size);
-
-        cudaStream_t stream_a_bias;
-        cudaStreamCreate(&stream_a_bias);
-        cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
-        init_bias_cuda<<<1, 1, 0, stream_a_bias>>>(a_bias, hidden_layer_size);
-
-        cudaStream_t stream_b;
-        cudaStreamCreate(&stream_b);
-        curandSetStream(prng, stream_b);
 
         // Weight matrix for output layer
         cudaMallocManaged(&b, output_layer_size * hidden_layer_size * sizeof(double));
-        curandGenerateUniformDouble(prng, b, output_layer_size * hidden_layer_size);
-        // init_weights<<<calc_dim3(output_layer_size * hidden_layer_size), BLOCK_SIZE>>>(b, output_layer_size * hidden_layer_size);
-        // init_weights << <1, 1 >> > (b, output_layer_size * hidden_layer_size);
-        // init_weights<<<1, BLOCK_SIZE, 0, stream_b>>>(b, output_layer_size * hidden_layer_size);
-        cudaDeviceSynchronize();
+        cudaMemPrefetchAsync(&b, output_layer_size * hidden_layer_size * sizeof(double), cudaCpuDeviceId);
         init_weights_cpu(b, output_layer_size, hidden_layer_size);
 
-        cudaStream_t stream_b_bias;
-        cudaStreamCreate(&stream_b_bias);
+        // Bias for hidden layer
+        cudaMallocManaged(&a_bias, hidden_layer_size * sizeof(double));
+        init_bias_cuda<<<1, 1>>>(a_bias, hidden_layer_size);
 
+        // Bias for output layer
         cudaMallocManaged(&b_bias, output_layer_size * sizeof(double));
-        init_bias_cuda<<<1, 1, 0, stream_b_bias>>>(b_bias, output_layer_size);
+        init_bias_cuda<<<1, 1>>>(b_bias, output_layer_size);
 
         cudaDeviceSynchronize();
 
@@ -353,13 +332,10 @@ public:
         cudaMallocManaged(&gradient_a, hidden_layer_size * input_layer_size * sizeof(double));
         cudaMallocManaged(&gradient_b, output_layer_size * hidden_layer_size * sizeof(double));
 
-        cudaStreamDestroy(stream_a);
-        cudaStreamDestroy(stream_a_bias);
-        cudaStreamDestroy(stream_b);
-        cudaStreamDestroy(stream_b_bias);
-
         timer.stop();
     }
+
+    enum Dataset {train, test};
 
     void learn(int num_of_epochs)
     {
@@ -372,7 +348,6 @@ public:
 
         for (int i = 0; i < num_of_epochs; i++)
         {
-            // printf("Epoch: %d\n", i);
             shuffle(indices.begin(), indices.end(), g);
 
             for (int j = 0; j < indices.size() - batch_size + 1; j += batch_size)
@@ -403,18 +378,17 @@ public:
                 cudaDeviceSynchronize();
             }
             // start_timer();
-            printf("| Train accuracy: %f%% ", calc_train_accuracy());
+            printf("| Train accuracy: %f%% ", calc_accuracy(train));
             // end_timer();
             // start_timer();
-            printf("| Test accuracy: %f%%\n", calc_test_accuracy());
+            printf("| Test accuracy: %f%%\n", calc_accuracy(test));
             // end_timer();
         }
-        // printf("| Test accuracy: %f\n", calc_test_accuracy());
     }
 
     void forward()
     {
-        int grid_col_dims = 512;
+        int grid_col_dims = (batch_size > 512) ? 512 : batch_size;
         // a: 16 * input_layer_size, input_layer: input_layer_size * batch_size
         // start_time();
         mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
@@ -444,24 +418,15 @@ public:
 
     void adjust_weights()
     {
-        // cudaStream_t stream_a;
-        // cudaStreamCreate(&stream_a);
         transpose<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(input_layer, input_layer_t, input_layer_size, batch_size);
-
-        // a: 16 * input_layer_size
         grad_desc_bias<<<calc_dim3(hidden_layer_size), BLOCK_SIZE>>>(a_bias, hidden_layer_error_avgs, learning_rate, hidden_layer_size);
         mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer_error, input_layer_t, gradient_a, hidden_layer_size, batch_size, input_layer_size);
         grad_desc_weights<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(input_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(a, gradient_a, learning_rate, hidden_layer_size, input_layer_size);
-        // cudaStreamDestroy(stream_a);
 
-        // cudaStream_t stream_b;
-        // cudaStreamCreate(&stream_b);
         transpose<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer, hidden_layer_t, hidden_layer_size, batch_size);
-        // b: output_layer_size * 16
         grad_desc_bias<<<calc_dim3(output_layer_size), BLOCK_SIZE>>>(b_bias, output_layer_error_avgs, learning_rate, output_layer_size);
         mat_mul<<<dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(output_layer_error, hidden_layer_t, gradient_b, output_layer_size, batch_size, hidden_layer_size);
         grad_desc_weights<<<dim3(calc_dim3(output_layer_size), calc_dim3(hidden_layer_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(b, gradient_b, learning_rate, output_layer_size, hidden_layer_size);
-        // cudaStreamDestroy(stream_b);
     }
 
     int predict(double *input_layer)
@@ -482,65 +447,27 @@ public:
         return prediction;
     }
 
-    float calc_train_accuracy()
-    {
-
-        int num_correct = 0;
-
-        transpose<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_train, input_layer, input_layer_size, SIZE_OF_TRAIN);
-        cudaDeviceSynchronize();
-
-        int old_batch_size = batch_size;
-        batch_size = SIZE_OF_TRAIN;
-
-        forward();
-        cudaDeviceSynchronize();
-
-        for (int j = 0; j < SIZE_OF_TRAIN; j++)
-        {
-            auto prediction = 0;
-            double max_value = 0;
-            for (int i = 0; i < output_layer_size; i++)
-            {
-                if (output_layer[i * batch_size + j] > max_value)
-                {
-                    prediction = i;
-                    max_value = output_layer[i * batch_size + j];
-                }
-            }
-
-            if (prediction == mnist.y_train[j])
-            {
-                num_correct++;
-            }
-        }
-
-        batch_size = old_batch_size;
-
-        return num_correct / (double)SIZE_OF_TRAIN;
-    }
-
-    float calc_test_accuracy()
+    float calc_accuracy(Dataset data)
     {
         int num_correct = 0;
         int num_counted = 0;
 
-        for (int i = 0; i < SIZE_OF_TEST - batch_size + 1; i += batch_size)
+        int data_count = (data == train) ? SIZE_OF_TRAIN : SIZE_OF_TEST;        
+
+        for (int i = 0; i < data_count - batch_size + 1; i += batch_size)
         {
             for (int j = 0; j < batch_size; j++)
             {
                 batch_indices[j] = i + j;
             }
 
-            copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_test, input_layer, batch_indices, input_layer_size, batch_size);
-            cudaDeviceSynchronize();
-
-            int true_labels[10000];
-
-            for (int j = 0; j < batch_size; j++)
+            if (data == train)
             {
-                true_labels[j] = (int)mnist.y_test[i + j];
+                copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_train, input_layer, batch_indices, input_layer_size, batch_size);
+            } else {
+                copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_test, input_layer, batch_indices, input_layer_size, batch_size);
             }
+            //cudaDeviceSynchronize();
 
             forward();
             cudaDeviceSynchronize();
@@ -558,7 +485,7 @@ public:
                     }
                 }
 
-                if (prediction == true_labels[j])
+                if ((data == train && prediction == mnist.y_train[num_counted]) || (data == test && prediction == mnist.y_test[num_counted]))
                 {
                     num_correct++;
                 }
@@ -566,14 +493,15 @@ public:
             }
         }
 
-        return num_correct / (float)num_counted * 100;
-    }
+        return num_correct / (float) num_counted * 100;
+    }    
 
 public:
     MNIST mnist;
+    
 
-    double *a;
-    double *b;
+    double *a; // Weight matrix for hidden layer
+    double *b; // Weight matrix for output layer
 
     double *a_bias;
     double *b_bias;
@@ -607,11 +535,5 @@ public:
     int deviceId;
     int numberOfSMs;
 
-    // double* input_layer_train;
-    // double* hidden_layer_train;
-    // double* output_layer_train;
-
-    // double* input_layer_test;
-    // double* hidden_layer_test;
-    // double* output_layer_test;
+    
 };

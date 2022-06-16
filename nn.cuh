@@ -153,7 +153,6 @@ __global__ void tanh(double *layers, int num, int batch_size)
     }
 }
 
-// Layer is 16 by batch_size (or output_layer_size by batch_size)
 __global__ void add_bias(double *layer, double *bias, int num, int batch_size)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -245,16 +244,11 @@ __global__ void init_weights(double *w, int size)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = blockDim.x * gridDim.x;
-    // printf("stride is: %d\n", stride);
 
-    // if (index != 0) return;
-
-    // auto epsilon = pow(6, 0.5) / pow(size, 0.5);
 
     for (int i = index; i < size; i += stride)
     {
         w[i] = (w[i] * 0.2) - 0.1;
-        // w[i] = w[i] * epsilon * 2 - epsilon;
     }
 }
 
@@ -377,29 +371,22 @@ public:
 
                 cudaDeviceSynchronize();
             }
-            // start_timer();
             printf("| Train accuracy: %f%% ", calc_accuracy(train));
-            // end_timer();
-            // start_timer();
             printf("| Test accuracy: %f%%\n", calc_accuracy(test));
-            // end_timer();
         }
     }
 
     void forward()
     {
         int grid_col_dims = (batch_size > 512) ? 512 : batch_size;
-        // a: 16 * input_layer_size, input_layer: input_layer_size * batch_size
-        // start_time();
+
         mat_mul<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(a, input_layer, hidden_layer, hidden_layer_size, input_layer_size, batch_size);
         add_bias<<<dim3(calc_dim3(hidden_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(hidden_layer, a_bias, hidden_layer_size, batch_size);
         tanh<<<calc_dim3(hidden_layer_size * grid_col_dims), BLOCK_SIZE>>>(hidden_layer, hidden_layer_size, batch_size);
 
-        // b: output_layer_size * 16, hidden_layer: 16 * 1
         mat_mul<<<dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(b, hidden_layer, output_layer, output_layer_size, hidden_layer_size, batch_size);
         add_bias<<<dim3(calc_dim3(output_layer_size), calc_dim3(grid_col_dims)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(output_layer, b_bias, output_layer_size, batch_size);
         sigmoid<<<calc_dim3(output_layer_size * grid_col_dims), BLOCK_SIZE>>>(output_layer, output_layer_size, batch_size);
-        // end_time();
     }
 
     int calc_dim3(int num)
@@ -467,7 +454,6 @@ public:
             } else {
                 copy_data<<<dim3(calc_dim3(input_layer_size), calc_dim3(batch_size)), dim3(BLOCK_SIZE, BLOCK_SIZE)>>>(mnist.x_test, input_layer, batch_indices, input_layer_size, batch_size);
             }
-            //cudaDeviceSynchronize();
 
             forward();
             cudaDeviceSynchronize();
@@ -534,6 +520,4 @@ public:
 
     int deviceId;
     int numberOfSMs;
-
-    
 };
